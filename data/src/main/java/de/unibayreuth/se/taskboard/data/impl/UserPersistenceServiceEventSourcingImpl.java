@@ -65,7 +65,6 @@ public class UserPersistenceServiceEventSourcingImpl implements UserPersistenceS
         */
         UUID userId = user.getId() == null ? UUID.randomUUID() : user.getId();
 
-        // Check for duplicate name if creating a new user
         if (user.getId() == null && userRepository.existsByName(user.getName())) {
             throw new DuplicateNameException("User  with name " + user.getName() + " already exists.");
         }
@@ -78,23 +77,19 @@ public class UserPersistenceServiceEventSourcingImpl implements UserPersistenceS
         EventEntity event;
 
         if (userRepository.existsById(userId)) {
-            // Updating an existing user
+
             User existingUser  = userRepository.findById(userId)
                     .map(userEntityMapper::fromEntity)
                     .orElseThrow(() -> new UserNotFoundException("User  not found with ID: " + userId));
 
-            // Update fields as necessary
             existingUser.setName(user.getName());
-            // Add other fields as necessary
 
             userEntity = userEntityMapper.toEntity(existingUser);
             event = EventEntity.updateEventOf(userEntity, userId, objectMapper);
         } else {
-            // Creating a new user
             event = EventEntity.insertEventOf(userEntity, userId, objectMapper);
         }
 
-        // Save the event and user
         eventRepository.saveAndFlush(event);
         userRepository.save(userEntity);
 

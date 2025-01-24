@@ -32,17 +32,4 @@ public class UserEntity implements Identifiable {
     public long getSerialVersionUID() {
         return 1L;
     }
-    @PrePersist
-    protected void onCreate() {
-        createdAt = LocalDateTime.now();
-    }
-
-    @Override
-    public String toString() {
-        return "User Entity{" +
-                "id=" + id +
-                ", createdAt=" + createdAt +
-                ", name='" + name + '\'' +
-                '}';
-    }
 }

@@ -1,0 +1,294 @@
+diff --git a/README.md b/README.md
+index e31b69f..d88c99b 100644
+--- a/README.md
++++ b/README.md
+@@ -63,7 +63,7 @@ mvn spring-boot:run -Dspring-boot.run.profiles=dev
+ #### Building an app image from the Dockerfile
+ 
+ ```shell
+-docker build taskboard:latest .
++docker build -t taskboard:latest .
+ ```
+ 
+ #### Create and run a Docker container based on the image (start DB container first)
+@@ -71,7 +71,7 @@ docker build taskboard:latest .
+ ```shell
+ docker network create container-net
+ docker run -d --name db --net container-net -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=postgres -p 5432:5432 postgres:16-alpine
+-docker run --net container-net -e SPRING_DATASOURCE_URL=jdbc:postgresql://db:5432/postgres -e SPRING_DATASOURCE_USERNAME=postgres -e SPRING_DATASOURCE_PASSWORD=postgres -it --rm taskboard:latest
++docker run --net container-net -e SPRING_DATASOURCE_URL=jdbc:postgresql://db:5432/postgres -e SPRING_DATASOURCE_USERNAME=postgres -e SPRING_DATASOURCE_PASSWORD=postgres -p 8080:8080  -it --rm taskboard:latest
+ ```
+ 
+ `-it`  runs a container in interactive mode with a pseudo-TTY (terminal).
+diff --git a/application/src/test/java/de/unibayreuth/se/taskboard/TaskBoardSystemTests.java b/application/src/test/java/de/unibayreuth/se/taskboard/TaskBoardSystemTests.java
+index 9591de3..42d5d9b 100644
+--- a/application/src/test/java/de/unibayreuth/se/taskboard/TaskBoardSystemTests.java
++++ b/application/src/test/java/de/unibayreuth/se/taskboard/TaskBoardSystemTests.java
+@@ -46,7 +46,7 @@ public class TaskBoardSystemTests extends AbstractSystemTest {
+                 .toList();
+ 
+         assertThat(retrievedTasks)
+-                .usingRecursiveFieldByFieldElementComparatorIgnoringFields("createdAt", "updatedAt") // prevent issues due to differing timestamps after conversions
++                .usingRecursiveFieldByFieldElementComparatorIgnoringFields("id","createdAt", "updatedAt") // prevent issues due to differing timestamps after conversions
+                 .containsExactlyInAnyOrderElementsOf(createdTasks);
+     }
+ 
+@@ -69,7 +69,7 @@ public class TaskBoardSystemTests extends AbstractSystemTest {
+         when()
+                 .get("/api/tasks/{id}", createdTask.getId())
+                 .then()
+-                .statusCode(400);
++                .statusCode(404);
+ 
+     }
+ 
+@@ -91,7 +91,7 @@ public class TaskBoardSystemTests extends AbstractSystemTest {
+                 .toList();
+ 
+         assertThat(retrievedUsers)
+-                .usingRecursiveFieldByFieldElementComparatorIgnoringFields("createdAt")
++                .usingRecursiveFieldByFieldElementComparatorIgnoringFields("id","createdAt")
+                 .containsExactlyInAnyOrderElementsOf(createdUsers);
+     }
+ 
+diff --git a/data/src/main/java/de/unibayreuth/se/taskboard/data/impl/TaskPersistenceServiceEventSourcingImpl.java b/data/src/main/java/de/unibayreuth/se/taskboard/data/impl/TaskPersistenceServiceEventSourcingImpl.java
+index 520c8f2..b2580f0 100644
+--- a/data/src/main/java/de/unibayreuth/se/taskboard/data/impl/TaskPersistenceServiceEventSourcingImpl.java
++++ b/data/src/main/java/de/unibayreuth/se/taskboard/data/impl/TaskPersistenceServiceEventSourcingImpl.java
+@@ -7,6 +7,7 @@ import de.unibayreuth.se.taskboard.business.ports.TaskPersistenceService;
+ import de.unibayreuth.se.taskboard.data.mapper.TaskEntityMapper;
+ import de.unibayreuth.se.taskboard.data.persistence.EventEntity;
+ import de.unibayreuth.se.taskboard.data.persistence.EventRepository;
++import de.unibayreuth.se.taskboard.data.persistence.TaskEntity;
+ import de.unibayreuth.se.taskboard.data.persistence.TaskRepository;
+ import lombok.RequiredArgsConstructor;
+ import org.springframework.context.annotation.Primary;
+@@ -15,6 +16,7 @@ import org.springframework.stereotype.Service;
+ 
+ import java.util.List;
+ import java.util.Optional;
++import com.fasterxml.jackson.databind.ObjectMapper;
+ import java.util.UUID;
+ 
+ /**
+@@ -27,6 +29,7 @@ public class TaskPersistenceServiceEventSourcingImpl implements TaskPersistenceS
+     private final TaskRepository taskRepository;
+     private final TaskEntityMapper taskEntityMapper;
+     private final EventRepository eventRepository;
++    private final ObjectMapper objectMapper;
+     @Override
+     public void clear() {
+         taskRepository.findAll()
+@@ -73,21 +76,48 @@ public class TaskPersistenceServiceEventSourcingImpl implements TaskPersistenceS
+     @Override
+     public Task upsert(@NonNull Task task) throws TaskNotFoundException {
+         // TODO: Implement upsert
+-
+         /*
+         The upsert method in the TaskPersistenceServiceEventSourcingImpl class handles both the creation and updating of tasks.
+         If the task ID is null, it creates a new task by generating a new UUID, saving an insert event, and returning the newly created task.
+         If the task ID is not null, it updates the existing task by finding it in the repository, updating its fields, saving an update event, and returning the updated task.
+         In both cases, it uses the EventRepository to log the changes and the TaskRepository to persist the task data.
+         */
++        UUID taskId = task.getId() == null ? UUID.randomUUID() : task.getId();
++
++        TaskEntity taskEntity = taskEntityMapper.toEntity(task);
++        taskEntity.setId(taskId);
++
++        EventEntity event;
++
++        if (taskRepository.existsById(taskId)) {
++            // Updating an existing task
++            TaskEntity existingTaskEntity = taskRepository.findById(taskId)
++                    .orElseThrow(() -> new TaskNotFoundException("Task with ID " + taskId + " not found."));
++
++            // Update fields from the incoming task object
++            existingTaskEntity.setTitle(task.getTitle());
++            existingTaskEntity.setDescription(task.getDescription());
++            existingTaskEntity.setStatus(task.getStatus());
++            existingTaskEntity.setAssigneeId(task.getAssigneeId());
++            // Update other fields as necessary
++
++            event = EventEntity.updateEventOf(existingTaskEntity, taskId, objectMapper);
++            taskEntity = existingTaskEntity; // Use the updated entity
++        } else {
++            // Creating a new task
++            event = EventEntity.insertEventOf(taskEntity, taskId, objectMapper);
++        }
+ 
+-        return new Task("title", "description");
++        eventRepository.saveAndFlush(event);
++        taskRepository.save(taskEntity);
++
++        return taskEntityMapper.fromEntity(taskEntity);
++//        return new Task("title", "description");
+     }
+ 
+     @Override
+     public void delete(@NonNull UUID id) throws TaskNotFoundException {
+         // TODO: Implement delete
+-
+         /*
+         The delete method in the TaskPersistenceServiceEventSourcingImpl class performs the following actions:
+         Attempts to find a Task by its ID in the taskRepository.
+@@ -96,5 +126,16 @@ public class TaskPersistenceServiceEventSourcingImpl implements TaskPersistenceS
+         Checks if the task still exists in the taskRepository.
+         If the task still exists, it throws an IllegalStateException indicating the task was not successfully deleted.
+         */
++        TaskEntity taskEntity = taskRepository.findById(id)
++                .orElseThrow(() -> new TaskNotFoundException("Task with ID " + id + " not found."));
++
++        EventEntity event = EventEntity.deleteEventOf(taskEntity, id);
++        eventRepository.saveAndFlush(event);
++
++        taskRepository.deleteById(id);
++
++        if (taskRepository.existsById(id)) {
++            throw new IllegalStateException("Task was not successfully deleted.");
++        }
+     }
+ }
+diff --git a/data/src/main/java/de/unibayreuth/se/taskboard/data/impl/UserPersistenceServiceEventSourcingImpl.java b/data/src/main/java/de/unibayreuth/se/taskboard/data/impl/UserPersistenceServiceEventSourcingImpl.java
+index b1b7f80..726f127 100644
+--- a/data/src/main/java/de/unibayreuth/se/taskboard/data/impl/UserPersistenceServiceEventSourcingImpl.java
++++ b/data/src/main/java/de/unibayreuth/se/taskboard/data/impl/UserPersistenceServiceEventSourcingImpl.java
+@@ -11,9 +11,12 @@ import org.springframework.context.annotation.Primary;
+ import org.springframework.lang.NonNull;
+ import org.springframework.stereotype.Service;
+ 
++import java.time.LocalDateTime;
+ import java.util.List;
+ import java.util.Optional;
+ import java.util.UUID;
++import com.fasterxml.jackson.databind.ObjectMapper;
++
+ 
+ @Service
+ @RequiredArgsConstructor
+@@ -22,6 +25,7 @@ public class UserPersistenceServiceEventSourcingImpl implements UserPersistenceS
+     private final UserRepository userRepository;
+     private final UserEntityMapper userEntityMapper;
+     private final EventRepository eventRepository;
++    private final ObjectMapper objectMapper;
+ 
+     @Override
+     public void clear() {
+@@ -59,6 +63,42 @@ public class UserPersistenceServiceEventSourcingImpl implements UserPersistenceS
+         If the user ID is not null, it updates the existing user by finding it in the repository, updating its fields, saving an update event, and returning the updated user.
+         In both cases, it uses the EventRepository to log the changes and the UserRepository to persist the user data.
+         */
+-        return new User("Firstname Lastname");
++        UUID userId = user.getId() == null ? UUID.randomUUID() : user.getId();
++
++        // Check for duplicate name if creating a new user
++        if (user.getId() == null && userRepository.existsByName(user.getName())) {
++            throw new DuplicateNameException("User  with name " + user.getName() + " already exists.");
++        }
++
++        UserEntity userEntity = userEntityMapper.toEntity(user);
++        userEntity.setId(userId);
++        if (user.getId() == null) {
++            userEntity.setCreatedAt(LocalDateTime.now());
++        }
++        EventEntity event;
++
++        if (userRepository.existsById(userId)) {
++            // Updating an existing user
++            User existingUser  = userRepository.findById(userId)
++                    .map(userEntityMapper::fromEntity)
++                    .orElseThrow(() -> new UserNotFoundException("User  not found with ID: " + userId));
++
++            // Update fields as necessary
++            existingUser.setName(user.getName());
++            // Add other fields as necessary
++
++            userEntity = userEntityMapper.toEntity(existingUser);
++            event = EventEntity.updateEventOf(userEntity, userId, objectMapper);
++        } else {
++            // Creating a new user
++            event = EventEntity.insertEventOf(userEntity, userId, objectMapper);
++        }
++
++        // Save the event and user
++        eventRepository.saveAndFlush(event);
++        userRepository.save(userEntity);
++
++        return userEntityMapper.fromEntity(userEntity);
++//        return new User("Firstname Lastname");
+     }
+ }
+diff --git a/data/src/main/java/de/unibayreuth/se/taskboard/data/persistence/TaskEntity.java b/data/src/main/java/de/unibayreuth/se/taskboard/data/persistence/TaskEntity.java
+index 84cf993..879bf8c 100644
+--- a/data/src/main/java/de/unibayreuth/se/taskboard/data/persistence/TaskEntity.java
++++ b/data/src/main/java/de/unibayreuth/se/taskboard/data/persistence/TaskEntity.java
+@@ -1,6 +1,7 @@
+ package de.unibayreuth.se.taskboard.data.persistence;
+ 
+ import de.unibayreuth.se.taskboard.business.domain.TaskStatus;
++import de.unibayreuth.se.taskboard.business.domain.Identifiable;
+ import jakarta.persistence.*;
+ import lombok.*;
+ 
+@@ -16,7 +17,7 @@ import java.util.UUID;
+ @NoArgsConstructor
+ @AllArgsConstructor
+ @Table(name = "tasks")
+-public class TaskEntity {
++public class TaskEntity implements Identifiable{
+     @Id
+     @GeneratedValue(strategy= GenerationType.UUID)
+     private UUID id;
+@@ -36,4 +37,9 @@ public class TaskEntity {
+ 
+     @Column(name = "assignee_id")
+     private UUID assigneeId; // deliberately not using a @ManyToOne relationship here to decouple the entities
++
++    @Override
++    public long getSerialVersionUID() {
++        return 1L;
++    }
+ }
+diff --git a/data/src/main/java/de/unibayreuth/se/taskboard/data/persistence/UserEntity.java b/data/src/main/java/de/unibayreuth/se/taskboard/data/persistence/UserEntity.java
+index ddcc7b3..b8c0d74 100644
+--- a/data/src/main/java/de/unibayreuth/se/taskboard/data/persistence/UserEntity.java
++++ b/data/src/main/java/de/unibayreuth/se/taskboard/data/persistence/UserEntity.java
+@@ -1,5 +1,7 @@
+ package de.unibayreuth.se.taskboard.data.persistence;
+ 
++
++import de.unibayreuth.se.taskboard.business.domain.Identifiable;
+ import jakarta.persistence.*;
+ import lombok.*;
+ 
+@@ -15,7 +17,7 @@ import java.util.UUID;
+ @NoArgsConstructor
+ @AllArgsConstructor
+ @Table(name = "users")
+-public class UserEntity {
++public class UserEntity implements Identifiable {
+     @Id
+     @GeneratedValue(strategy= GenerationType.UUID)
+     private UUID id;
+@@ -25,4 +27,22 @@ public class UserEntity {
+ 
+     @Column(unique=true)
+     private String name;
++
++    @Override
++    public long getSerialVersionUID() {
++        return 1L;
++    }
++    @PrePersist
++    protected void onCreate() {
++        createdAt = LocalDateTime.now();
++    }
++
++    @Override
++    public String toString() {
++        return "User Entity{" +
++                "id=" + id +
++                ", createdAt=" + createdAt +
++                ", name='" + name + '\'' +
++                '}';
++    }
+ }

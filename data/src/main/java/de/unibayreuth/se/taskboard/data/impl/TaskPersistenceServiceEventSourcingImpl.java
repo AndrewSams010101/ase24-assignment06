@@ -90,21 +90,19 @@ public class TaskPersistenceServiceEventSourcingImpl implements TaskPersistenceS
         EventEntity event;
 
         if (taskRepository.existsById(taskId)) {
-            // Updating an existing task
             TaskEntity existingTaskEntity = taskRepository.findById(taskId)
                     .orElseThrow(() -> new TaskNotFoundException("Task with ID " + taskId + " not found."));
 
-            // Update fields from the incoming task object
+
             existingTaskEntity.setTitle(task.getTitle());
             existingTaskEntity.setDescription(task.getDescription());
             existingTaskEntity.setStatus(task.getStatus());
             existingTaskEntity.setAssigneeId(task.getAssigneeId());
-            // Update other fields as necessary
+
 
             event = EventEntity.updateEventOf(existingTaskEntity, taskId, objectMapper);
-            taskEntity = existingTaskEntity; // Use the updated entity
+            taskEntity = existingTaskEntity;
         } else {
-            // Creating a new task
             event = EventEntity.insertEventOf(taskEntity, taskId, objectMapper);
         }
 
