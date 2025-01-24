@@ -7,6 +7,7 @@ import de.unibayreuth.se.taskboard.business.ports.TaskPersistenceService;
 import de.unibayreuth.se.taskboard.data.mapper.TaskEntityMapper;
 import de.unibayreuth.se.taskboard.data.persistence.EventEntity;
 import de.unibayreuth.se.taskboard.data.persistence.EventRepository;
+import de.unibayreuth.se.taskboard.data.persistence.TaskEntity;
 import de.unibayreuth.se.taskboard.data.persistence.TaskRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Primary;
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Optional;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.UUID;
 
 /**
@@ -27,6 +29,7 @@ public class TaskPersistenceServiceEventSourcingImpl implements TaskPersistenceS
     private final TaskRepository taskRepository;
     private final TaskEntityMapper taskEntityMapper;
     private final EventRepository eventRepository;
+    private final ObjectMapper objectMapper;
     @Override
     public void clear() {
         taskRepository.findAll()
@@ -73,21 +76,48 @@ public class TaskPersistenceServiceEventSourcingImpl implements TaskPersistenceS
     @Override
     public Task upsert(@NonNull Task task) throws TaskNotFoundException {
         // TODO: Implement upsert
-
         /*
         The upsert method in the TaskPersistenceServiceEventSourcingImpl class handles both the creation and updating of tasks.
         If the task ID is null, it creates a new task by generating a new UUID, saving an insert event, and returning the newly created task.
         If the task ID is not null, it updates the existing task by finding it in the repository, updating its fields, saving an update event, and returning the updated task.
         In both cases, it uses the EventRepository to log the changes and the TaskRepository to persist the task data.
         */
+        UUID taskId = task.getId() == null ? UUID.randomUUID() : task.getId();
 
-        return new Task("title", "description");
+        TaskEntity taskEntity = taskEntityMapper.toEntity(task);
+        taskEntity.setId(taskId);
+
+        EventEntity event;
+
+        if (taskRepository.existsById(taskId)) {
+            // Updating an existing task
+            TaskEntity existingTaskEntity = taskRepository.findById(taskId)
+                    .orElseThrow(() -> new TaskNotFoundException("Task with ID " + taskId + " not found."));
+
+            // Update fields from the incoming task object
+            existingTaskEntity.setTitle(task.getTitle());
+            existingTaskEntity.setDescription(task.getDescription());
+            existingTaskEntity.setStatus(task.getStatus());
+            existingTaskEntity.setAssigneeId(task.getAssigneeId());
+            // Update other fields as necessary
+
+            event = EventEntity.updateEventOf(existingTaskEntity, taskId, objectMapper);
+            taskEntity = existingTaskEntity; // Use the updated entity
+        } else {
+            // Creating a new task
+            event = EventEntity.insertEventOf(taskEntity, taskId, objectMapper);
+        }
+
+        eventRepository.saveAndFlush(event);
+        taskRepository.save(taskEntity);
+
+        return taskEntityMapper.fromEntity(taskEntity);
+//        return new Task("title", "description");
     }
 
     @Override
     public void delete(@NonNull UUID id) throws TaskNotFoundException {
         // TODO: Implement delete
-
         /*
         The delete method in the TaskPersistenceServiceEventSourcingImpl class performs the following actions:
         Attempts to find a Task by its ID in the taskRepository.
@@ -96,5 +126,16 @@ public class TaskPersistenceServiceEventSourcingImpl implements TaskPersistenceS
         Checks if the task still exists in the taskRepository.
         If the task still exists, it throws an IllegalStateException indicating the task was not successfully deleted.
         */
+        TaskEntity taskEntity = taskRepository.findById(id)
+                .orElseThrow(() -> new TaskNotFoundException("Task with ID " + id + " not found."));
+
+        EventEntity event = EventEntity.deleteEventOf(taskEntity, id);
+        eventRepository.saveAndFlush(event);
+
+        taskRepository.deleteById(id);
+
+        if (taskRepository.existsById(id)) {
+            throw new IllegalStateException("Task was not successfully deleted.");
+        }
     }
 }

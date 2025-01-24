@@ -1,6 +1,7 @@
 package de.unibayreuth.se.taskboard.data.persistence;
 
 import de.unibayreuth.se.taskboard.business.domain.TaskStatus;
+import de.unibayreuth.se.taskboard.business.domain.Identifiable;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -16,7 +17,7 @@ import java.util.UUID;
 @NoArgsConstructor
 @AllArgsConstructor
 @Table(name = "tasks")
-public class TaskEntity {
+public class TaskEntity implements Identifiable{
     @Id
     @GeneratedValue(strategy= GenerationType.UUID)
     private UUID id;
@@ -36,4 +37,9 @@ public class TaskEntity {
 
     @Column(name = "assignee_id")
     private UUID assigneeId; // deliberately not using a @ManyToOne relationship here to decouple the entities
+
+    @Override
+    public long getSerialVersionUID() {
+        return 1L;
+    }
 }

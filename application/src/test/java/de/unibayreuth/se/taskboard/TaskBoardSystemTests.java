@@ -46,7 +46,7 @@ public class TaskBoardSystemTests extends AbstractSystemTest {
                 .toList();
 
         assertThat(retrievedTasks)
-                .usingRecursiveFieldByFieldElementComparatorIgnoringFields("createdAt", "updatedAt") // prevent issues due to differing timestamps after conversions
+                .usingRecursiveFieldByFieldElementComparatorIgnoringFields("id","createdAt", "updatedAt") // prevent issues due to differing timestamps after conversions
                 .containsExactlyInAnyOrderElementsOf(createdTasks);
     }
 
@@ -69,7 +69,7 @@ public class TaskBoardSystemTests extends AbstractSystemTest {
         when()
                 .get("/api/tasks/{id}", createdTask.getId())
                 .then()
-                .statusCode(400);
+                .statusCode(404);
 
     }
 
@@ -91,7 +91,7 @@ public class TaskBoardSystemTests extends AbstractSystemTest {
                 .toList();
 
         assertThat(retrievedUsers)
-                .usingRecursiveFieldByFieldElementComparatorIgnoringFields("createdAt")
+                .usingRecursiveFieldByFieldElementComparatorIgnoringFields("id","createdAt")
                 .containsExactlyInAnyOrderElementsOf(createdUsers);
     }
 

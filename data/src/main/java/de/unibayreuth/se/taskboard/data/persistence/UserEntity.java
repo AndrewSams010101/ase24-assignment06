@@ -1,5 +1,7 @@
 package de.unibayreuth.se.taskboard.data.persistence;
 
+
+import de.unibayreuth.se.taskboard.business.domain.Identifiable;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -15,7 +17,7 @@ import java.util.UUID;
 @NoArgsConstructor
 @AllArgsConstructor
 @Table(name = "users")
-public class UserEntity {
+public class UserEntity implements Identifiable {
     @Id
     @GeneratedValue(strategy= GenerationType.UUID)
     private UUID id;
@@ -25,4 +27,22 @@ public class UserEntity {
 
     @Column(unique=true)
     private String name;
+
+    @Override
+    public long getSerialVersionUID() {
+        return 1L;
+    }
+    @PrePersist
+    protected void onCreate() {
+        createdAt = LocalDateTime.now();
+    }
+
+    @Override
+    public String toString() {
+        return "User Entity{" +
+                "id=" + id +
+                ", createdAt=" + createdAt +
+                ", name='" + name + '\'' +
+                '}';
+    }
 }

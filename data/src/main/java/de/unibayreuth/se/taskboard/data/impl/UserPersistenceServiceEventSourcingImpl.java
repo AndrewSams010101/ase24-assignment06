@@ -11,9 +11,12 @@ import org.springframework.context.annotation.Primary;
 import org.springframework.lang.NonNull;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 
 @Service
 @RequiredArgsConstructor
@@ -22,6 +25,7 @@ public class UserPersistenceServiceEventSourcingImpl implements UserPersistenceS
     private final UserRepository userRepository;
     private final UserEntityMapper userEntityMapper;
     private final EventRepository eventRepository;
+    private final ObjectMapper objectMapper;
 
     @Override
     public void clear() {
@@ -59,6 +63,42 @@ public class UserPersistenceServiceEventSourcingImpl implements UserPersistenceS
         If the user ID is not null, it updates the existing user by finding it in the repository, updating its fields, saving an update event, and returning the updated user.
         In both cases, it uses the EventRepository to log the changes and the UserRepository to persist the user data.
         */
-        return new User("Firstname Lastname");
+        UUID userId = user.getId() == null ? UUID.randomUUID() : user.getId();
+
+        // Check for duplicate name if creating a new user
+        if (user.getId() == null && userRepository.existsByName(user.getName())) {
+            throw new DuplicateNameException("User  with name " + user.getName() + " already exists.");
+        }
+
+        UserEntity userEntity = userEntityMapper.toEntity(user);
+        userEntity.setId(userId);
+        if (user.getId() == null) {
+            userEntity.setCreatedAt(LocalDateTime.now());
+        }
+        EventEntity event;
+
+        if (userRepository.existsById(userId)) {
+            // Updating an existing user
+            User existingUser  = userRepository.findById(userId)
+                    .map(userEntityMapper::fromEntity)
+                    .orElseThrow(() -> new UserNotFoundException("User  not found with ID: " + userId));
+
+            // Update fields as necessary
+            existingUser.setName(user.getName());
+            // Add other fields as necessary
+
+            userEntity = userEntityMapper.toEntity(existingUser);
+            event = EventEntity.updateEventOf(userEntity, userId, objectMapper);
+        } else {
+            // Creating a new user
+            event = EventEntity.insertEventOf(userEntity, userId, objectMapper);
+        }
+
+        // Save the event and user
+        eventRepository.saveAndFlush(event);
+        userRepository.save(userEntity);
+
+        return userEntityMapper.fromEntity(userEntity);
+//        return new User("Firstname Lastname");
     }
 }
